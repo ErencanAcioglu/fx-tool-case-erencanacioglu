@@ -85,6 +85,12 @@ def upstream_calls(monkeypatch):
     upstream.use_client(None)
 
 
+@pytest.fixture(autouse=True)
+def pinned_today(monkeypatch):
+    """Pin "today", so the suite does not start failing as the calendar moves."""
+    monkeypatch.setattr(app_module, "today", lambda: date(2026, 9, 1))
+
+
 @pytest.fixture
 def client():
     return TestClient(app_module.app)

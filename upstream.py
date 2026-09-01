@@ -16,6 +16,10 @@ import httpx
 
 DEFAULT_UPSTREAM_BASE = "https://api.frankfurter.dev"
 
+# The ECB's euro reference rate series starts here. Earlier dates have no rate
+# to find, so asking for one is a question we can refuse without a round trip.
+SERIES_START = date(1999, 1, 4)
+
 _CONNECT_TIMEOUT = 2.0
 _READ_TIMEOUT = 5.0
 

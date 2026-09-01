@@ -11,7 +11,9 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional, Union
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 import upstream
 
@@ -28,6 +30,41 @@ ECB_TIMEZONE = ZoneInfo("Europe/Berlin")
 WEEKDAY_NAMES = (
     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
 )
+
+
+class ToolError(Exception):
+    """A refusal: a short code for the model, a sentence for the customer.
+
+    Raised instead of guessing. Every non-2xx answer this service gives goes
+    through here, so the shape of a failure never varies.
+    """
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
+@app.exception_handler(ToolError)
+async def _refusal(_: Request, error: ToolError) -> JSONResponse:
+    return JSONResponse(
+        status_code=error.status,
+        content={"error": error.code, "message": error.message},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _unreadable_request(_: Request, error: RequestValidationError) -> JSONResponse:
+    """FastAPI's own 422 body has a different shape; restate it as ours."""
+    fields = ", ".join(sorted({str(item["loc"][-1]) for item in error.errors()}))
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "invalid_request",
+            "message": f"The request could not be read. Check these query parameters: {fields}.",
+        },
+    )
 
 
 def today() -> date:
@@ -47,6 +84,35 @@ def staleness_note(asked: date, published: date) -> str:
     )
 
 
+def parse_date(raw: Optional[str]) -> Optional[date]:
+    """Turn the caller's date into one worth asking the upstream about.
+
+    Refusing here keeps two whole classes of wrong answer off the table: the
+    upstream cannot invent a future rate, and it has nothing before 1999.
+    """
+    if raw is None:
+        return None
+    try:
+        asked = date.fromisoformat(raw)
+    except ValueError:
+        raise ToolError(
+            422, "invalid_date",
+            f"date must be a calendar date written as YYYY-MM-DD; got {raw!r}.",
+        )
+    if asked > today():
+        raise ToolError(
+            422, "date_in_future",
+            f"{asked.isoformat()} is in the future, and no rate has been published for it.",
+        )
+    if asked < upstream.SERIES_START:
+        raise ToolError(
+            422, "date_before_series",
+            f"The ECB's euro reference rates begin on "
+            f"{upstream.SERIES_START.isoformat()}, so there is none for {asked.isoformat()}.",
+        )
+    return asked
+
+
 def _number(value: Decimal) -> Union[int, float]:
     """Render a Decimal as a JSON number, without a pointless trailing .0."""
     return int(value) if value == value.to_integral_value() else float(value)
@@ -64,7 +130,7 @@ async def convert(
     """Convert an amount between two currencies at an ECB published rate."""
     source = source.upper()
     target = target.upper()
-    on = date.fromisoformat(asked) if asked else None
+    on = parse_date(asked)
 
     quote = await upstream.fetch_quote(source, target, on)
 
