@@ -1,4 +1,7 @@
-fastapi==0.141.1
-uvicorn==0.52.4
-httpx==0.28.1
-pytest==9.1.1
+# Floors, not exact pins: the same file has to install on whatever Python 3.9+
+# the machine running ./run.sh happens to have. Exact pins of the newest
+# releases only resolve on 3.10+, which is not a promise this repo can make.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+httpx>=0.27,<1
+pytest>=8,<11

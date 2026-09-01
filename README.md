@@ -15,8 +15,11 @@ PORT=9000 ./run.sh                                 # a different port
 FX_UPSTREAM_BASE=http://127.0.0.1:9999 ./run.sh    # a fake upstream
 ```
 
-The first run creates `.venv` and installs `requirements.txt`; later runs skip
-straight to serving.
+Python 3.9 or newer. The first run creates `.venv` and installs
+`requirements.txt`; later runs skip straight to serving. Dependencies are
+pinned to floors rather than exact versions, so the same file installs on
+whatever Python the machine has — exact pins of the current releases only
+resolve on 3.10+.
 
 | Variable | Default | |
 |---|---|---|
