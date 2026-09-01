@@ -92,14 +92,14 @@ async def _unexpected(_: Request, error: Exception) -> JSONResponse:
     )
 
 
-def cache_lifetime(on: Optional[date]) -> float:
-    """How long an answer about `on` stays true."""
-    return math.inf if on is not None and on < today() else TODAYS_RATE_TTL_SECONDS
-
-
 def today() -> date:
     """Today on the ECB's clock. A seam, so tests can pin the date."""
     return datetime.now(ECB_TIMEZONE).date()
+
+
+def cache_lifetime(on: Optional[date]) -> float:
+    """How long an answer about `on` stays true."""
+    return math.inf if on is not None and on < today() else TODAYS_RATE_TTL_SECONDS
 
 
 def staleness_note(asked: date, published: date) -> str:
@@ -250,7 +250,7 @@ async def convert(
 
     # No date in the question means "as of now", so that is what we compare the
     # published date against. On a Sunday morning, "latest" is still stale.
-    asked_day = on if on else today()
+    asked_day = on if on is not None else today()
     stale = quote.rate_date != asked_day
 
     result = (value * quote.rate).quantize(CENTS, rounding=ROUND_HALF_UP)

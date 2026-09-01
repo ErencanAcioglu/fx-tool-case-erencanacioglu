@@ -12,7 +12,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 import httpx
 
