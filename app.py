@@ -7,7 +7,7 @@ was asked about.
 """
 
 from datetime import date, datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional, Union
 from zoneinfo import ZoneInfo
 
@@ -21,6 +21,10 @@ app = FastAPI(title="fx-tool")
 
 CENTS = Decimal("0.01")
 SOURCE_LABEL = "ECB via frankfurter.dev"
+
+# Past a trillion nobody is converting money any more, and an unbounded amount
+# lets a caller hand us an exponent large enough to be its own problem.
+MAX_AMOUNT = Decimal("1000000000000")
 
 # The ECB publishes once a working day, on its own clock. Using that clock means
 # "latest" means the same thing here as it does upstream.
@@ -84,6 +88,55 @@ def staleness_note(asked: date, published: date) -> str:
     )
 
 
+def parse_amount(raw: Optional[str]) -> Decimal:
+    """Read the amount as a Decimal, straight from the text the caller sent.
+
+    Taking it as a string and parsing here, rather than letting the framework
+    hand us a float, is what keeps ten decimal places intact all the way to the
+    multiplication.
+    """
+    if raw is None or not raw.strip():
+        raise ToolError(
+            422, "invalid_amount",
+            "amount is required: give the number to convert, for example amount=250.",
+        )
+    try:
+        value = Decimal(raw.strip())
+    except InvalidOperation:
+        raise ToolError(422, "invalid_amount", f"amount must be a number; got {raw!r}.")
+    # NaN and Infinity parse fine as Decimals, and comparing them raises, so
+    # this check has to come before the range checks below.
+    if not value.is_finite():
+        raise ToolError(422, "invalid_amount", f"amount must be a finite number; got {raw!r}.")
+    if value <= 0:
+        raise ToolError(
+            422, "invalid_amount",
+            f"amount must be greater than zero; got {raw!r}.",
+        )
+    if value > MAX_AMOUNT:
+        raise ToolError(
+            422, "invalid_amount",
+            f"amount must not be larger than {MAX_AMOUNT:,f}; got {raw!r}.",
+        )
+    return value
+
+
+def parse_currency(raw: Optional[str], field: str) -> str:
+    """Check the shape of a currency code. Whether it exists is the ECB's call."""
+    if raw is None or not raw.strip():
+        raise ToolError(
+            422, "invalid_currency",
+            f"{field} is required: give a three-letter currency code, for example {field}=EUR.",
+        )
+    code = raw.strip().upper()
+    if len(code) != 3 or not (code.isalpha() and code.isascii()):
+        raise ToolError(
+            422, "invalid_currency",
+            f"{field} must be a three-letter currency code such as EUR; got {raw!r}.",
+        )
+    return code
+
+
 def parse_date(raw: Optional[str]) -> Optional[date]:
     """Turn the caller's date into one worth asking the upstream about.
 
@@ -120,17 +173,27 @@ def _number(value: Decimal) -> Union[int, float]:
 
 @app.get("/tools/convert")
 async def convert(
-    amount: str = Query(description="How much to convert, e.g. 250"),
-    source: str = Query(alias="from", description="Currency to convert from, e.g. EUR"),
-    target: str = Query(alias="to", description="Currency to convert to, e.g. TRY"),
-    asked: Optional[str] = Query(
+    amount: Optional[str] = Query(default=None, description="How much to convert, e.g. 250"),
+    from_: Optional[str] = Query(
+        default=None, alias="from", description="Currency to convert from, e.g. EUR"
+    ),
+    to: Optional[str] = Query(
+        default=None, alias="to", description="Currency to convert to, e.g. TRY"
+    ),
+    on_date: Optional[str] = Query(
         default=None, alias="date", description="Rate date, YYYY-MM-DD. Defaults to the latest."
     ),
 ):
     """Convert an amount between two currencies at an ECB published rate."""
-    source = source.upper()
-    target = target.upper()
-    on = parse_date(asked)
+    value = parse_amount(amount)
+    source = parse_currency(from_, "from")
+    target = parse_currency(to, "to")
+    if source == target:
+        raise ToolError(
+            422, "same_currency",
+            f"from and to are both {source}, so there is no exchange rate to look up.",
+        )
+    on = parse_date(on_date)
 
     quote = await upstream.fetch_quote(source, target, on)
 
@@ -139,7 +202,6 @@ async def convert(
     asked_day = on if on else today()
     stale = quote.rate_date != asked_day
 
-    value = Decimal(amount)
     result = (value * quote.rate).quantize(CENTS, rounding=ROUND_HALF_UP)
 
     return {
