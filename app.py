@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import upstream
 
@@ -47,8 +48,9 @@ WEEKDAY_NAMES = (
 class ToolError(Exception):
     """A refusal: a short code for the model, a sentence for the customer.
 
-    Raised instead of guessing. Every non-2xx answer this service gives goes
-    through here, so the shape of a failure never varies.
+    Raised instead of guessing. Every refusal the endpoint itself makes is one
+    of these, and the handlers below put framework errors into the same two
+    fields, so a caller never has to parse a second error format.
     """
 
     def __init__(self, status: int, code: str, message: str):
@@ -75,6 +77,25 @@ async def _unreadable_request(_: Request, error: RequestValidationError) -> JSON
         content={
             "error": "invalid_request",
             "message": f"The request could not be read. Check these query parameters: {fields}.",
+        },
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _routing_error(request: Request, error: StarletteHTTPException) -> JSONResponse:
+    """Starlette answers an unknown path with a body of its own shape. Restate
+    it, so mistyping the URL fails the same way as mistyping a parameter."""
+    codes = {404: "unknown_endpoint", 405: "method_not_allowed"}
+    messages = {
+        404: f"There is no endpoint at {request.url.path}. "
+             "This service has one: GET /tools/convert.",
+        405: f"{request.method} is not allowed on {request.url.path}; use GET.",
+    }
+    return JSONResponse(
+        status_code=error.status_code,
+        content={
+            "error": codes.get(error.status_code, "request_failed"),
+            "message": messages.get(error.status_code, "The request could not be served."),
         },
     )
 

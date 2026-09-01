@@ -132,3 +132,22 @@ class TestCurrency:
         # honest to put in rate_date. Refusing is the only answer that keeps
         # every field true.
         assert upstream_calls == []
+
+
+class TestErrorShape:
+    """A caller that gets the URL wrong should meet the same contract as one
+    that gets a parameter wrong, not the framework's own error body."""
+
+    def test_an_unknown_path_fails_in_our_shape(self, client):
+        response = client.get("/tools/convrt")
+
+        assert response.status_code == 404
+        assert sorted(response.json()) == ["error", "message"]
+        assert response.json()["error"] == "unknown_endpoint"
+
+    def test_a_wrong_method_fails_in_our_shape(self, client):
+        response = client.post("/tools/convert")
+
+        assert response.status_code == 405
+        assert sorted(response.json()) == ["error", "message"]
+        assert response.json()["error"] == "method_not_allowed"

@@ -32,7 +32,7 @@ resolve on 3.10+.
 ./test.sh
 ```
 
-38 tests, no network needed. The upstream is faked in-process with
+40 tests, no network needed. The upstream is faked in-process with
 `httpx.MockTransport`; one test points `FX_UPSTREAM_BASE` at a genuinely closed
 port and checks the refusal that comes back.
 
@@ -108,6 +108,8 @@ numbers in it.
 | 422 | `date_before_series` | earlier than 1999-01-04 |
 | 422 | `unknown_currency` | the upstream publishes no rate for the pair |
 | 422 | `invalid_request` | the query string could not be read at all |
+| 404 | `unknown_endpoint` | no endpoint at that path |
+| 405 | `method_not_allowed` | wrong HTTP method for that path |
 | 502 | `upstream_error` | the upstream answered with an error status |
 | 502 | `upstream_invalid_response` | the upstream answered `200` with something unusable |
 | 503 | `upstream_unavailable` | the upstream could not be reached, or was too slow |
