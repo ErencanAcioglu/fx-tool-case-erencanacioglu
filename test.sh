@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Runs your tests. They must pass with no network at all: we run this with
-# FX_UPSTREAM_BASE pointing at a closed port.
+# Runs the tests. They never reach the network: the upstream is faked in-process
+# and one test points FX_UPSTREAM_BASE at a closed port on purpose.
 set -euo pipefail
-echo "test.sh is not implemented yet" >&2
-exit 1
+cd "$(dirname "$0")"
+
+if [ ! -x .venv/bin/python ]; then
+  python3 -m venv .venv || uv venv --seed .venv
+  .venv/bin/python -m pip install --quiet --disable-pip-version-check -r requirements.txt
+fi
+
+exec .venv/bin/python -m pytest -q "$@"
