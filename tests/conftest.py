@@ -103,6 +103,14 @@ def pinned_today(monkeypatch):
     monkeypatch.setattr(app_module, "today", lambda: date(2026, 9, 1))
 
 
+@pytest.fixture(autouse=True)
+def empty_cache():
+    """The cache lives in a module, so it has to be cleared between tests."""
+    upstream.reset_cache()
+    yield
+    upstream.reset_cache()
+
+
 @pytest.fixture
 def client():
     return TestClient(app_module.app)

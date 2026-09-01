@@ -7,10 +7,12 @@ pointed at a fake; the real host appears only as the default below.
 
 import json
 import os
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 import httpx
 
@@ -22,6 +24,20 @@ SERIES_START = date(1999, 1, 4)
 
 _CONNECT_TIMEOUT = 2.0
 _READ_TIMEOUT = 5.0
+
+# Held so a repeated question does not become a repeated request. Bounded,
+# because the key space is every currency pair times every date since 1999.
+_MAX_CACHE_ENTRIES = 512
+
+# A seam, so tests can move time forward without sleeping.
+_clock = time.monotonic
+
+_cache: "OrderedDict[Tuple[str, str, str, str], Tuple[Quote, float]]" = OrderedDict()
+
+
+def reset_cache() -> None:
+    """Empty the cache. Tests call this; nothing else needs to."""
+    _cache.clear()
 
 
 class UpstreamProblem(Exception):
@@ -87,13 +103,43 @@ def use_client(replacement: Optional[httpx.AsyncClient]) -> None:
     _client = replacement
 
 
-async def fetch_quote(source: str, target: str, on: Optional[date]) -> Quote:
-    """Ask the upstream for one rate.
+async def fetch_quote(
+    source: str, target: str, on: Optional[date], cache_for: float = 0.0
+) -> Quote:
+    """Ask the upstream for one rate, or reuse a recent answer.
 
     `on` is the date the caller asked for, or None for the latest publication.
     The date on the returned Quote is the upstream's own, never `on`.
+
+    `cache_for` is how long this answer stays good, in seconds; math.inf for a
+    past day, which cannot change. The caller decides, because whether a date is
+    settled is a calendar question, not an HTTP one.
     """
     path = on.isoformat() if on else "latest"
+    # The base URL is part of the key: repointing FX_UPSTREAM_BASE must not
+    # serve answers that came from somewhere else.
+    key = (base_url(), source, target, path)
+
+    cached = _cache.get(key)
+    if cached is not None:
+        quote, good_until = cached
+        if good_until > _clock():
+            _cache.move_to_end(key)
+            return quote
+        del _cache[key]
+
+    quote = await _ask_upstream(source, target, path)
+
+    if cache_for > 0:
+        _cache[key] = (quote, _clock() + cache_for)
+        _cache.move_to_end(key)
+        while len(_cache) > _MAX_CACHE_ENTRIES:
+            _cache.popitem(last=False)
+    return quote
+
+
+async def _ask_upstream(source: str, target: str, path: str) -> Quote:
+    """One request, and everything that can go wrong with it."""
     try:
         response = await client().get(
             f"{base_url()}/{path}",

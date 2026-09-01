@@ -7,6 +7,7 @@ was asked about.
 """
 
 import logging
+import math
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional, Union
@@ -27,6 +28,11 @@ SOURCE_LABEL = "ECB via frankfurter.dev"
 # Past a trillion nobody is converting money any more, and an unbounded amount
 # lets a caller hand us an exponent large enough to be its own problem.
 MAX_AMOUNT = Decimal("1000000000000")
+
+# A rate published on a past day is settled and can be kept indefinitely. One
+# for today is not: the ECB publishes in the afternoon, so an answer fetched
+# this morning can be superseded within the same day.
+TODAYS_RATE_TTL_SECONDS = 600.0
 
 # The ECB publishes once a working day, on its own clock. Using that clock means
 # "latest" means the same thing here as it does upstream.
@@ -84,6 +90,11 @@ async def _unexpected(_: Request, error: Exception) -> JSONResponse:
             "message": "Something went wrong on our side, so no rate was returned.",
         },
     )
+
+
+def cache_lifetime(on: Optional[date]) -> float:
+    """How long an answer about `on` stays true."""
+    return math.inf if on is not None and on < today() else TODAYS_RATE_TTL_SECONDS
 
 
 def today() -> date:
@@ -211,7 +222,7 @@ async def convert(
     on = parse_date(on_date)
 
     try:
-        quote = await upstream.fetch_quote(source, target, on)
+        quote = await upstream.fetch_quote(source, target, on, cache_lifetime(on))
     except upstream.Unavailable as problem:
         raise ToolError(
             503, "upstream_unavailable",
