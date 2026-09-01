@@ -85,6 +85,18 @@ def upstream_calls(monkeypatch):
     upstream.use_client(None)
 
 
+@pytest.fixture
+def upstream_that(monkeypatch):
+    """Install an upstream that answers however a test needs it to."""
+
+    def install(handler):
+        monkeypatch.setenv("FX_UPSTREAM_BASE", FAKE_BASE)
+        upstream.use_client(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+    yield install
+    upstream.use_client(None)
+
+
 @pytest.fixture(autouse=True)
 def pinned_today(monkeypatch):
     """Pin "today", so the suite does not start failing as the calendar moves."""

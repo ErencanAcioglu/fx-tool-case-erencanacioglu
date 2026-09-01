@@ -9,7 +9,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 import httpx
@@ -22,6 +22,30 @@ SERIES_START = date(1999, 1, 4)
 
 _CONNECT_TIMEOUT = 2.0
 _READ_TIMEOUT = 5.0
+
+
+class UpstreamProblem(Exception):
+    """The upstream did not give us a rate we can trust.
+
+    These say what went wrong, not what status code to answer with. Choosing
+    that is the HTTP layer's job, which keeps this module out of it.
+    """
+
+
+class Unavailable(UpstreamProblem):
+    """Could not be reached, or took too long to answer."""
+
+
+class Failed(UpstreamProblem):
+    """Answered, but with an error status."""
+
+
+class NoSuchRate(UpstreamProblem):
+    """Answered 404: it publishes nothing for that pair."""
+
+
+class Malformed(UpstreamProblem):
+    """Answered 200 with something that is not a usable rate."""
 
 
 @dataclass(frozen=True)
@@ -70,14 +94,41 @@ async def fetch_quote(source: str, target: str, on: Optional[date]) -> Quote:
     The date on the returned Quote is the upstream's own, never `on`.
     """
     path = on.isoformat() if on else "latest"
-    response = await client().get(
-        f"{base_url()}/{path}",
-        params={"base": source, "symbols": target},
-    )
-    # parse_float=Decimal keeps the published rate exact; going through float
-    # here would lose digits before we ever do the multiplication.
-    payload = json.loads(response.text, parse_float=Decimal)
-    return Quote(
-        rate=Decimal(payload["rates"][target]),
-        rate_date=date.fromisoformat(payload["date"]),
-    )
+    try:
+        response = await client().get(
+            f"{base_url()}/{path}",
+            params={"base": source, "symbols": target},
+        )
+    except httpx.HTTPError as problem:
+        # Connection refused, DNS failure, timeout: all the same to the caller.
+        raise Unavailable(str(problem)) from problem
+
+    if response.status_code == 404:
+        raise NoSuchRate(f"no rates published for {source}/{target}")
+    if response.status_code != 200:
+        raise Failed(f"upstream answered {response.status_code}")
+
+    try:
+        # parse_float=Decimal keeps the published rate exact; going through a
+        # float here would lose digits before we ever do the multiplication.
+        payload = json.loads(response.text, parse_float=Decimal)
+    except ValueError as problem:
+        raise Malformed("answer was not JSON") from problem
+
+    return _read_quote(payload, target)
+
+
+def _read_quote(payload: object, target: str) -> Quote:
+    """Build a Quote, or refuse. A half-read answer is not worth having."""
+    if not isinstance(payload, dict):
+        raise Malformed("answer was not a JSON object")
+    try:
+        rate = Decimal(payload["rates"][target])
+        rate_date = date.fromisoformat(payload["date"])
+    except (AttributeError, InvalidOperation, KeyError, TypeError, ValueError) as problem:
+        raise Malformed(f"answer carried no readable rate and date for {target}") from problem
+
+    # is_finite() first: comparing a NaN Decimal raises rather than returning.
+    if not rate.is_finite() or rate <= 0:
+        raise Malformed(f"rate for {target} was {rate}")
+    return Quote(rate=rate, rate_date=rate_date)

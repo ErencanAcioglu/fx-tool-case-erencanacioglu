@@ -6,6 +6,7 @@ endpoint reports the date its rate actually belongs to rather than the date it
 was asked about.
 """
 
+import logging
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional, Union
@@ -18,6 +19,7 @@ from fastapi.responses import JSONResponse
 import upstream
 
 app = FastAPI(title="fx-tool")
+logger = logging.getLogger("fx-tool")
 
 CENTS = Decimal("0.01")
 SOURCE_LABEL = "ECB via frankfurter.dev"
@@ -67,6 +69,19 @@ async def _unreadable_request(_: Request, error: RequestValidationError) -> JSON
         content={
             "error": "invalid_request",
             "message": f"The request could not be read. Check these query parameters: {fields}.",
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def _unexpected(_: Request, error: Exception) -> JSONResponse:
+    """Last resort. A tool caller must never be handed an HTML error page."""
+    logger.exception("unhandled error while converting", exc_info=error)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_error",
+            "message": "Something went wrong on our side, so no rate was returned.",
         },
     )
 
@@ -195,7 +210,32 @@ async def convert(
         )
     on = parse_date(on_date)
 
-    quote = await upstream.fetch_quote(source, target, on)
+    try:
+        quote = await upstream.fetch_quote(source, target, on)
+    except upstream.Unavailable as problem:
+        raise ToolError(
+            503, "upstream_unavailable",
+            "The rate provider could not be reached, so no rate was available. "
+            "Nothing was converted; try again shortly.",
+        ) from problem
+    except upstream.NoSuchRate as problem:
+        raise ToolError(
+            422, "unknown_currency",
+            f"The ECB publishes no rate between {source} and {target}. "
+            "Check both currency codes.",
+        ) from problem
+    except upstream.Failed as problem:
+        raise ToolError(
+            502, "upstream_error",
+            "The rate provider returned an error, so no rate was available. "
+            "Nothing was converted.",
+        ) from problem
+    except upstream.Malformed as problem:
+        raise ToolError(
+            502, "upstream_invalid_response",
+            "The rate provider's answer could not be read as a rate, so it was "
+            "discarded rather than guessed at.",
+        ) from problem
 
     # No date in the question means "as of now", so that is what we compare the
     # published date against. On a Sunday morning, "latest" is still stale.
