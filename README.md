@@ -36,6 +36,9 @@ resolve on 3.10+.
 `httpx.MockTransport`; one test points `FX_UPSTREAM_BASE` at a genuinely closed
 port and checks the refusal that comes back.
 
+Verified from a clean clone rather than against the `.venv` already on disk, on
+Python 3.9.6 and on 3.12.13.
+
 ## The endpoint
 
 ```
@@ -110,8 +113,15 @@ numbers in it.
 | 503 | `upstream_unavailable` | the upstream could not be reached, or was too slow |
 | 500 | `internal_error` | a bug on our side |
 
-`503` is worth retrying. `502` is not: the upstream answered, it just answered
-with something that cannot be trusted.
+### What a calling agent should do with each
+
+| Answer | The agent should |
+|---|---|
+| `200`, `stale: false` | Use the result |
+| `200`, `stale: true` | Use the result, and tell the customer which day the rate is from. `note` is a whole sentence it can pass on unchanged |
+| `4xx` | Fix the request. Sending it again unchanged fails the same way |
+| `502` | Not worth retrying: the upstream answered, it just answered with something that cannot be trusted |
+| `503` | Worth retrying. Nothing was converted, and the upstream may simply have been unreachable for a moment |
 
 ## Three things worth knowing
 

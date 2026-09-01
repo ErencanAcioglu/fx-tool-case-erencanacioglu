@@ -160,3 +160,19 @@ quoted in cents. Only the rounding of the *rate* is wrong.
 
 **The `/health` endpoint.** Not required by the brief, but harmless and useful
 to anything running this behind a load balancer.
+
+---
+
+## Where each of these is pinned down in Part A
+
+`app.py` is a separate implementation, not a repaired `tool.py`. But these
+defects are why several of its tests exist, and each test fails if the
+corresponding mistake is reintroduced:
+
+| Defect above | Test that catches it |
+|---|---|
+| Cache key leaves out the date | `test_a_different_date_is_a_different_question` |
+| `rate_date` is the date that was asked for | `TestDateTheRateBelongsTo::test_weekend_answer_carries_the_published_date_and_is_flagged` |
+| A failure answers `0.0` with a `200` | `_refusal()` asserts no `rate` and no `result` on every error path |
+| `round(rate, 2)` | `test_the_rate_is_reported_exactly_as_published` |
+| Documented parameters silently ignored | `test_converts_at_the_rate_the_upstream_published`, which calls with `from` and `date` and compares the whole body |

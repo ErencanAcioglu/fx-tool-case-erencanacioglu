@@ -53,12 +53,15 @@ the one line to change, and I would rather flag it than quietly pick one.
   a request, a fake and a failure path for a better sentence, not a better number.
 - **Move the cache out of the process.** It is per-worker today, so four workers
   mean four copies and four times the upstream traffic. Redis with the same key
-  would fix that without changing the logic.
+  would fix that without changing the logic. Not yet, because it adds a service
+  that has to be running before the endpoint answers at all.
 - **Structured logs with a request id.** `logger.exception` is enough to debug
   one failure; it is not enough to answer "how often is the upstream stale".
+  Not yet, because nothing is collecting them.
 - **A retry with backoff on `503`.** The endpoint refuses cleanly today, which
   is correct, but one retry on a connect failure would turn most blips into a
-  slightly slower success.
+  slightly slower success. Not yet, because a retry also hides how often the
+  upstream is failing, and I would rather see that number first.
 
 ## AI tools
 
