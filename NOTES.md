@@ -86,19 +86,37 @@ the httpx client — turned out to be fine, which is why it is in the
 
 ## One thing the AI got wrong
 
-In the first working version, `asked_date` was reported as
-`(on or quote.rate_date)` — that is, when no date was given, the date the
-upstream returned was used as the date that had been asked for.
+**It pinned dependencies to versions only my machine could install.** The
+versions in `requirements.txt` came from `pip freeze` after developing on
+Python 3.12, and the current FastAPI release needs 3.10 or newer. Everything
+looked fine locally — 38 tests green, the endpoint answering correctly —
+because `.venv` was already on disk and nobody was reinstalling anything.
 
-That makes `stale` **always** `false` for a `latest` call, because it compares
-the upstream's date against itself. A Sunday-morning "what is EUR/TRY today"
-would have returned Friday's rate with `stale: false` and no note: exactly the
-silent wrong-date answer this service exists to prevent. The tests were green,
-because the test was written from the same assumption.
+I noticed it by not trusting that. Before calling it done I cloned the pushed
+repository into an empty directory and ran `./test.sh` there, the way it will
+actually be run. It died during install, before a single test executed: a bash
+script's `PATH` finds the system `python3`, which here is 3.9.6, and the pinned
+FastAPI simply has no distribution for it. That is the first thing a reviewer
+would have seen.
 
-I noticed it while writing the weekend cases and asking what `asked_date` even
-means when the caller gives no date. It should mean "as of now", not "whatever
-the upstream happened to say". The fix was one line —
-`asked_day = on if on is not None else today()` — plus two tests that pin
-"today" either side of a publication day, so the behaviour is now checked in
-both directions rather than assumed.
+The fix was to pin floors with major-version ceilings instead of exact
+versions, so the same file resolves on whatever Python is present. The suite
+now passes on 3.9.6 as well as 3.12, and I checked the endpoint against the
+live upstream on 3.9 too. The lesson is not about pinning: it is that "the
+tests pass" and "someone else can run this" are different claims, and only one
+of them was true.
+
+**And one in the logic.** In the first working version, `asked_date` was
+reported as `(on or quote.rate_date)` — when no date was given, the date the
+upstream returned was used as the date that had been asked for. That makes
+`stale` **always** `false` for a `latest` call, because it compares the
+upstream's date against itself. A Sunday-morning "what is EUR/TRY today" would
+have returned Friday's rate with `stale: false` and no note: exactly the silent
+wrong-date answer this service exists to prevent. The tests were green, because
+the test was written from the same assumption.
+
+I caught it while writing the weekend cases and asking what `asked_date` even
+means when the caller gives no date. It should mean "as of now". The fix was
+one line — `asked_day = on if on is not None else today()` — plus two tests
+that pin "today" either side of a publication day, so it is now checked in both
+directions rather than assumed.
